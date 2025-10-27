@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>شبیه‌ساز ضرب/تقسیم کسرها — اصلاح شده</title>
+<style>
+  :root { --cell-size: 40px; }
+  body { font-family: Tahoma, sans-serif; background:#f6f8fb; color:#123; padding:18px; text-align:center; }
+  h1 { margin:6px 0 12px; }
+  .panel { display:inline-block; background:#fff; padding:12px; border-radius:10px; box-shadow:0 6px 16px rgba(0,0,0,0.06); }
+  input, select { padding:6px 8px; border-radius:6px; border:1.6px solid #777; font-size:15px; text-align:center; }
+  button { margin-top:10px; padding:8px 12px; border-radius:8px; border:0; background:#2d9cff; color:#fff; cursor:pointer; }
+  button.secondary { background:#8aa0a6; }
+  #conversionBox { display:none; margin:14px auto; max-width:760px; background:#e8f4ff; color:#024; padding:10px; border-radius:8px; font-weight:700; }
+  #visualization { margin:18px auto; display:flex; flex-wrap:wrap; gap:14px; justify-content:center; align-items:flex-start; min-height:120px; }
+  .unit { display:grid; border:2px solid #333; overflow:hidden; border-radius:6px; background:#fff; }
+  .cell { width:var(--cell-size); height:var(--cell-size); box-sizing:border-box; border:1px solid #ddd; background:#fff; transition: background .25s; }
+  .cell.yellow{ background: rgba(241,196,15,0.85); }
+  .cell.blue{ background: rgba(52,152,219,0.85); }
+  .cell.green{ background: rgba(46,204,113,0.92); }
+  .unit-caption{ font-size:13px; padding:6px 8px; background:#fafafa; border-top:1px solid #eee; }
+  #result { margin-top:12px; font-weight:700; color:#1b7f3a; min-height:24px; }
+  .note{ font-size:13px; color:#555; margin-top:8px; }
+  @media(max-width:600px){ :root{ --cell-size:28px; } .panel{ width:100%; } }
+</style>
+</head>
+<body>
+  <h1>شبیه‌ساز ضرب / تقسیم کسرها — اصلاح‌شده</h1>
+
+  <div class="panel" role="region" aria-label="ورودی‌ها">
+    عملیات:
+    <select id="operation">
+      <option value="multiply">ضرب (×)</option>
+      <option value="divide">تقسیم (÷)</option>
+    </select>
+    &nbsp;&nbsp;
+    جهت کسر اول:
+    <select id="firstOrient">
+      <option value="horizontal">افقی (ردیف)</option>
+      <option value="vertical">عمودی (ستون)</option>
+    </select>
+
+    <div style="margin-top:10px; display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap;">
+      <div style="text-align:center;">
+        <div>کسر اول</div>
+        <input id="num1" placeholder="صورت ۱" inputmode="numeric" />
+        <div style="height:6px"></div>
+        <input id="den1" placeholder="مخرج ۱" inputmode="numeric" />
+      </div>
+
+      <div id="opSymbol" style="font-size:20px; align-self:center;">×</div>
+
+      <div style="text-align:center;">
+        <div>کسر دوم</div>
+        <input id="num2" placeholder="صورت ۲" inputmode="numeric" />
+        <div style="height:6px"></div>
+        <input id="den2" placeholder="مخرج ۲" inputmode="numeric" />
+      </div>
+    </div>
+
+    <div style="margin-top:10px;">
+      <button id="runBtn">نمایش</button>
+      <button id="clearBtn" class="secondary">پاک کردن</button>
+    </div>
+  </div>
+
+  <div id="conversionBox" aria-live="polite"></div>
+  <div id="visualization" aria-live="polite"></div>
+  <div id="result" aria-live="polite"></div>
+  <div class="note">در حالت «تقسیم» شبیه‌سازی مرحله‌ای حذف شده و فقط شکلِ جواب (واحدهای کامل + باقیمانده) نمایش داده می‌شود.</div>
+
+<script>
+/* --- کمکی‌ها --- */
+function persianToLatinDigits(s){
+  if(!s && s!==0) return s;
+  return String(s).replace(/[۰-۹]/g, d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+}
+function parseInput(v){
+  if(typeof v !== 'string') v = String(v);
+  v = v.trim();
+  // map persian digits to english
+  const map = { '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9' };
+  v = v.replace(/[۰-۹]/g, m=>map[m]);
+  const n = parseInt(v,10);
+  return Number.isInteger(n) ? n : NaN;
+}
+function gcd(a,b){ a = Math.abs(a); b = Math.abs(b); if(b===0) return a; while(b){ const t = a % b; a = b; b = t; } return a; }
+function simplify(n,d){ const g = gcd(n,d)||1; return [n/g, d/g]; }
+function toPersianDigits(s){
+  return String(s).replace(/\d/g, d=>"۰۱۲۳۴۵۶۷۸۹"[d]);
+}
+
+/* --- DOM --- */
+const opSel = document.getElementById('operation');
+const orientSel = document.getElementById('firstOrient');
+const num1In = document.getElementById('num1'), den1In = document.getElementById('den1');
+const num2In = document.getElementById('num2'), den2In = document.getElementById('den2');
+const runBtn = document.getElementById('runBtn'), clearBtn = document.getElementById('clearBtn');
+const convBox = document.getElementById('conversionBox'), viz = document.getElementById('visualization'), resultBox = document.getElementById('result');
+const opSymbol = document.getElementById('opSymbol');
+
+opSel.addEventListener('change', ()=>{ opSymbol.textContent = opSel.value === 'multiply' ? '×' : '÷'; });
+
+clearBtn.addEventListener('click', ()=>{ viz.innerHTML=''; convBox.style.display='none'; convBox.innerHTML=''; resultBox.textContent=''; num1In.value=den1In.value=num2In.value=den2In.value=''; });
+
+runBtn.addEventListener('click', ()=>{ startSimulation(); });
+
+/* --- شروع شبیه‌سازی --- */
+function startSimulation(){
+  viz.innerHTML=''; convBox.style.display='none'; convBox.innerHTML=''; resultBox.textContent='';
+
+  const n1 = parseInput(num1In.value);
+  const d1 = parseInput(den1In.value);
+  const n2 = parseInput(num2In.value);
+  const d2 = parseInput(den2In.value);
+  const op = opSel.value;
+  const orient = orientSel.value; // 'horizontal' یا 'vertical'
+
+  if([n1,d1,n2,d2].some(x => isNaN(x))){
+    alert('لطفاً همهٔ صورت‌ها و مخرج‌ها را وارد کنید (اعداد صحیح).');
+    return;
+  }
+  if(d1 <= 0 || d2 <= 0){
+    alert('مخرج‌ها باید بزرگتر از صفر باشند.');
+    return;
+  }
+  if(d1 * d2 > 5000){
+    alert('مجموع اندازه شبکه بسیار بزرگ می‌شود؛ مخرج‌ها را کوچکتر انتخاب کنید.');
+    return;
+  }
+
+  if(op === 'multiply'){
+    // ضرب: رسم area model طبق جهت انتخابی و tiled units برای صورت>مخرج
+    drawMultiplication(n1,d1,n2,d2,orient);
+  } else {
+    // تقسیم: تبدیل به ضرب (همان روشی که شما درس می‌دهی)
+    // a/b ÷ c/d  => a/b × d/c
+    const convN2 = d2, convD2 = n2;
+    convBox.style.display = 'block';
+    convBox.innerHTML = `تبدیل تقسیم به ضرب:<br>${toPersianDigits(n1)}/${toPersianDigits(d1)} ÷ ${toPersianDigits(n2)}/${toPersianDigits(d2)} = ${toPersianDigits(n1)}/${toPersianDigits(d1)} × ${toPersianDigits(convN2)}/${toPersianDigits(convD2)}`;
+    // برای تقسیم دیگر شبیه‌سازی مرحله‌ای نمی‌خواهیم؛ فقط شکل جواب نهایی را نمایش می‌دهیم
+    const resultNum = n1 * convN2;
+    const resultDen = d1 * convD2;
+    const [sN,sD] = simplify(resultNum, resultDen);
+    drawResultShape(resultNum, resultDen); // رسم شکلِ جواب (واحدها + باقیمانده)
+    resultBox.textContent = `نتیجه: ${toPersianDigits(resultNum)}/${toPersianDigits(resultDen)}${ (sN!==resultNum || sD!==resultDen) ? ` = ${toPersianDigits(sN)}/${toPersianDigits(sD)}` : '' } ≈ ${toPersianDigits((resultNum/resultDen).toFixed(3).replace(/\.?0+$/,''))}`;
+  }
+}
+
+/* --- تابع ضرب (روش کلاس شما) --- */
+function drawMultiplication(n1,d1,n2,d2, orient){
+  // جهت: اگر first horizontal => کسر اول روی ردیف‌ها (rows=d1) و کسر دوم روی ستون‌ها (cols=d2)
+  // اگر first vertical => کسر اول روی ستون‌ها (cols=d1) و کسر دوم روی ردیف‌ها (rows=d2)
+  const firstIsRows = (orient === 'horizontal');
+  const rows = firstIsRows ? d1 : d2;
+  const cols = firstIsRows ? d2 : d1;
+
+  // تعداد واحدهای کامل مورد نیاز برای پوشش صورتِ کسر اول
+  const wholeUnits = Math.ceil(n1 / d1);
+
+  // برای هر واحد، grid جدا ایجاد کن
+  for(let u=0; u<wholeUnits; u++){
+    // remainingYellowParts: در این واحد چند "بخش" از مخرج کسر اول (به صورت واحدهای جزئی) باید رنگ شود
+    // هر واحد شامل دقیقاً d1 ردیف (اگر firstIsRows) یا d1 ستون (اگر first vertical) است
+    const remainingNumerator = Math.max(0, n1 - u * d1); // تعداد "واحد ردیف" یا "ستون" که باید در این واحد زرد باشند (بر حسب واحد تقسیم کسر اول)
+    const yellowParts = Math.min(remainingNumerator, d1); // بین 0 تا d1
+
+    // ایجاد grid واحد
+    const grid = document.createElement('div');
+    grid.className = 'unit';
+    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+    // ایجاد سلول‌ها
+    const cells = [];
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        grid.appendChild(cell);
+        cells.push({r,c,el:cell});
+      }
+    }
+
+    // رنگ زرد (کسر اول) — توجه: yellowParts بر حسب تعداد ردیف‌ها (اگر firstIsRows) یا ستون‌ها (اگر vertical)
+    if(yellowParts > 0){
+      if(firstIsRows){
+        for(const it of cells){
+          if(it.r < yellowParts) it.el.classList.add('yellow');
+        }
+      } else {
+        for(const it of cells){
+          if(it.c < yellowParts) it.el.classList.add('yellow');
+        }
+      }
+    }
+
+    // رنگ آبی (کسر دوم) — کسر دوم همیشه در جهت عمود تقسیم می‌شود
+    // نگاهی به n2 (صورت کسر دوم) که نشان‌دهندهٔ تعداد ستون‌های آبی (در حالت firstIsRows) یا ردیف‌های آبی (در حالت عمودی) است
+    if(firstIsRows){
+      // second divides columns -> columns c < n2 are blue
+      for(const it of cells){
+        if(it.c < n2){
+          if(it.el.classList.contains('yellow')) { it.el.classList.remove('yellow'); it.el.classList.add('green'); }
+          else it.el.classList.add('blue');
+        }
+      }
+    } else {
+      // first vertical -> second divides rows -> rows r < n2 are blue
+      for(const it of cells){
+        if(it.r < n2){
+          if(it.el.classList.contains('yellow')) { it.el.classList.remove('yellow'); it.el.classList.add('green'); }
+          else it.el.classList.add('blue');
+        }
+      }
+    }
+
+    // caption و افزودن به نمایشی
+    const caption = document.createElement('div');
+    caption.className = 'unit-caption';
+    const rem = Math.max(0, n1 - u*d1);
+    caption.textContent = `واحد ${u+1}` + (rem < d1 ? ` — باقیمانده: ${rem}/${d1}` : ` — کامل`);
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(grid);
+    wrapper.appendChild(caption);
+    viz.appendChild(wrapper);
+  }
+
+  // نمایش عددی نتیجه
+  const resultNum = n1 * n2;
+  const resultDen = d1 * d2;
+  const [sN,sD] = simplify(resultNum,resultDen);
+  resultBox.textContent = `نتیجه: ${toPersianDigits(resultNum)}/${toPersianDigits(resultDen)}` + ((sN!==resultNum||sD!==resultDen)? ` = ${toPersianDigits(sN)}/${toPersianDigits(sD)}` : '') + ` ≈ ${toPersianDigits((resultNum/resultDen).toFixed(3).replace(/\.?0+$/,''))}`;
+}
+
+/* --- رسم شکلِ جواب برای تقسیم (فقط شکل نهایی) --- */
+function drawResultShape(num, den){
+  viz.innerHTML = '';
+  if(den <= 0){ return; }
+
+  // تعداد واحدهای کامل و باقی‌مانده
+  const fullUnits = Math.floor(num / den);
+  const remainder = num % den;
+
+  // تابع کمکی برای ساخت grid تقریباً مربعی با دقیقاً den خانه
+  function createDenGrid(denom){
+    // سعی می‌کنیم شبکه‌ای تقریبا مربعی بسازیم
+    let cols = Math.ceil(Math.sqrt(denom));
+    let rows = Math.ceil(denom / cols);
+    // محدودیت عرض برای جلوگیری از ستون‌های خیلی زیاد
+    if(cols > 12){ cols = 12; rows = Math.ceil(denom / cols); }
+    const unit = document.createElement('div');
+    unit.className = 'unit';
+    unit.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    unit.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+    // ایجاد rows*cols سلول، اما بیشتر از denom را مخفی می‌کنیم
+    for(let i=0;i<rows*cols;i++){
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      if(i >= denom) cell.style.visibility = 'hidden';
+      unit.appendChild(cell);
+    }
+    return unit;
+  }
+
+  // واحدهای کامل (تمام خانه‌ها سبز)
+  for(let u=0; u<fullUnits; u++){
+    const grid = createDenGrid(den);
+    grid.querySelectorAll('.cell').forEach(c => { if(c.style.visibility !== 'hidden') c.classList.add('green'); });
+    const caption = document.createElement('div'); caption.className='unit-caption'; caption.textContent = `واحد کامل ${u+1}`;
+    const wrapper = document.createElement('div'); wrapper.appendChild(grid); wrapper.appendChild(caption);
+    viz.appendChild(wrapper);
+  }
+
+  // باقیمانده
+  if(remainder > 0){
+    const grid = createDenGrid(den);
+    const cells = Array.from(grid.querySelectorAll('.cell')).filter(c=>c.style.visibility !== 'hidden');
+    for(let i=0;i<remainder && i<cells.length;i++){
+      cells[i].classList.add('green');
+    }
+    const caption = document.createElement('div'); caption.className='unit-caption'; caption.textContent = `باقیمانده: ${remainder}/${den}`;
+    const wrapper = document.createElement('div'); wrapper.appendChild(grid); wrapper.appendChild(caption);
+    viz.appendChild(wrapper);
+  }
+
+  if(fullUnits === 0 && remainder === 0){
+    const p = document.createElement('div'); p.textContent = 'جواب = 0'; viz.appendChild(p);
+  }
+}
+</script>
+</body>
+</html>
